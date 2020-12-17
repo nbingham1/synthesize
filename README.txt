@@ -1,17 +1,12 @@
-libinterpret_hse
-This library provides an interpreter for converting from an hse abstract syntax tree to an hse graph.
+# libsynthesize
 
-Dependencies:
-parse_hse
-	parse_boolean
-		parse
-			common
-hse
-	boolean
-		common
-interpret_boolean
-	parse_boolean
-		parse
-			common
-	boolean
-		common
+This library provides the necessary functionality for synthesizing production rules from handshaking expansions.
+
+## Dependencies:
+
+- hse
+  - boolean
+    - common
+- prs
+
+

@@ -1,155 +1,22 @@
 /*
- * synthesize.cpp
+ * hse2prs.cpp
  *
  *  Created on: Oct 29, 2020
  *      Author: nbingham
  */
 
-#include "synthesize.h"
+#include "hse2prs.h"
 
-namespace hse
+prs::production_rule_set hse_to_prs(const hse::graph &g)
 {
-
-unsigned_int decompose_hfactor(unsigned_int c, int w, map<cube, int> &factors, ucs::variable_set &vars, vector<int> hide)
-{
-	if (c.max_width() >= w and c.depth() > 1) {
-		boolean::cube common = c.supercube();
-		common.hide(hide);
-		if (common.width() < w)
-		{
-			boolean::unsigned_int c_left, c_right;
-			boolean::unsigned_int left_result, right_result;
-			unsigned long cubes = 0;
-			for (int i = 0; i < (int)c.bits.size(); i++) {
-				cubes += c.bits[i].cubes.size();
-			}
-			float c_weight = c.partition(c_left, c_right);
-
-			left_result = decompose_hfactor(c_left, w, factors, vars, hide);
-			right_result = decompose_hfactor(c_right, w, factors, vars, hide);
-			return left_result | right_result;
-		}
-		else
-		{
-			c.cofactor(common);
-			int index = -1;
-			map<cube, int>::iterator loc = factors.find(common);
-			if (loc == factors.end()) {
-				index = vars.define(ucs::variable());
-				vars.nodes[index].name.push_back(ucs::instance("f", {(int)factors.size()}));
-				factors.insert(pair<cube, int>(common, index));
-			} else {
-				index = loc->second;
-			}
-
-			unsigned_int result = decompose_hfactor(c, w, factors, vars, hide);
-			for (int i = 0; i < (int)result.bits.size(); i++) {
-				result.bits[i] &= boolean::cube(index, 1);
-			}
-			return result;
-		}
-	}
-
-	return c;
-}
-
-unsigned_int decompose_xfactor(unsigned_int c, int w, map<cube, int> &factors, ucs::variable_set &vars, vector<int> hide)
-{
-	if (c.max_width() >= w and c.depth() > 1) {
-		unsigned_int nc = ~c;
-		boolean::cube common = c.supercube();
-		boolean::cube ncommon = nc.supercube();
-		common.hide(hide);
-		ncommon.hide(hide);
-		int cw = common.width(), ncw = ncommon.width();
-
-		if (cw < w and ncw < w) {
-			unsigned_int c_left, c_right, nc_left, nc_right;
-			unsigned_int result, left_result, right_result;
-			float c_weight, nc_weight;
-			
-			unsigned long cubes = 0;
-			for (int i = 0; i < (int)c.bits.size(); i++) {
-				cubes += c.bits[i].cubes.size();
-			}
-
-			c_weight = c.partition(c_left, c_right);
-
-			cubes = 0;
-			for (int i = 0; i < (int)nc.bits.size(); i++) {
-				cubes += nc.bits[i].cubes.size();
-			}
-
-			nc_weight = nc.partition(nc_left, nc_right);
-
-			if (c_weight <= nc_weight)
-			{
-				left_result = decompose_xfactor(c_left, w, factors, vars, hide);
-				right_result = decompose_xfactor(c_right, w, factors, vars, hide);
-				result = left_result | right_result;
-			}
-			else if (nc_weight < c_weight)
-			{
-				left_result = decompose_xfactor(nc_left, w, factors, vars, hide);
-				right_result = decompose_xfactor(nc_right, w, factors, vars, hide);
-				result = left_result | right_result;
-				// TODO We're getting stuck here...
-				result = ~result;
-			}
-			return result;
-		} else if (cw >= ncw) {
-			c.cofactor(common);
-
-			map<cube, int>::iterator loc = factors.find(common);
-			int index = -1;
-			if (loc == factors.end()) {
-				index = vars.define(ucs::variable());
-				vars.nodes[index].name.push_back(ucs::instance("f", {(int)factors.size()}));
-				factors.insert(pair<cube, int>(common, index));
-			} else {
-				index = loc->second;
-			}
-		
-			unsigned_int result = decompose_xfactor(c, w, factors, vars, hide);
-			for (int i = 0; i < (int)result.bits.size(); i++) {
-				result.bits[i] &= boolean::cube(index, 1);
-			}
-			return result;
-		} else if (ncw > cw) {
-			nc.cofactor(ncommon);
-
-			map<cube, int>::iterator loc = factors.find(ncommon);
-			int index = -1;
-			if (loc == factors.end()) {
-				index = vars.define(ucs::variable());
-				vars.nodes[index].name.push_back(ucs::instance("f", {(int)factors.size()}));
-				factors.insert(pair<cube, int>(ncommon, index));
-			} else {
-				index = loc->second;
-			}
-			
-			unsigned_int result = decompose_xfactor(nc, w, factors, vars, hide);
-			for (int i = 0; i < (int)result.bits.size(); i++) {
-				result.bits[i] &= boolean::cube(index, 1);
-			}
-			return ~result;
-		}
-	}
-
-	return c;
-}
-
-
-prs::production_rule_set hse_to_prs(const graph &g)
-{
-	production_rule_set result;
+	prs::production_rule_set result;
 
 	vector<int> vars;
 	for (size_t i = 0; i < g.transitions.size(); i++)
 	{
 		if (g.transitions[i].behavior == hse::transition::active and not g.transitions[i].is_vacuous() and not g.transitions[i].is_infeasible())
 		{
-			production_rule rule;
+			prs::production_rule rule;
 			rule.local_action = g.transitions[i].local_action;
 			rule.remote_action = g.transitions[i].remote_action;
 			rule.guard = strengthen(petri::iterator(hse::transition::type, i));
@@ -160,20 +27,18 @@ prs::production_rule_set hse_to_prs(const graph &g)
 	return result;
 }
 
-/**
- * Work backwards from an implicant until we hit a state
- * in which our production rule should not fire, but does
- * given the current guard expression. From there we work
- * forward until we find a transition that separates the
- * conflicting state from the implicant state. We then use
- * a greedy algorithm to pick the smallest combination of
- * values from that transition that will separate the two.
- *
- * The use of greedy is only needed when we need to use a
- * passive transition to separate the two because passive
- * transitions can be a complex expression and not just one
- * variable and one value.
- */
+// Work backwards from an implicant until we hit a state
+// in which our production rule should not fire, but does
+// given the current guard expression. From there we work
+// forward until we find a transition that separates the
+// conflicting state from the implicant state. We then use
+// a greedy algorithm to pick the smallest combination of
+// values from that transition that will separate the two.
+
+// The use of greedy is only needed when we need to use a
+// passive transition to separate the two because passive
+// transitions can be a complex expression and not just one
+// variable and one value.
 boolean::cover strengthen(petri::iterator firing)
 {
 	boolean::cover result;
@@ -184,7 +49,7 @@ boolean::cover strengthen(petri::iterator firing)
 }
 
 
-
+/*
 
 	vector<size_t> vl, vl2;
 	petri_index tid;
@@ -295,8 +160,6 @@ boolean::cover strengthen(petri::iterator firing)
 
 }
 
-
-/*
 
 void merge_guards(canonical &guard0, canonical implicant0, canonical &guard1, canonical implicant1)
 {
@@ -827,20 +690,18 @@ void rule::strengthen(petri_net &net, int t)
 	for (list<reductionhdl>::iterator reduction = reductions.begin(); reduction != reductions.end(); reduction++)
 	{
 		log("", "begin execution", __FILE__, __LINE__);
-		/**
-		 * Work backwards from an implicant until we hit a state
-		 * in which our production rule should not fire, but does
-		 * given the current guard expression. From there we work
-		 * forward until we find a transition that separates the
-		 * conflicting state from the implicant state. We then use
-		 * the greedy algorithm to pick the smallest combination of
-		 * values from that transition that will separate the two.
-		 *
-		 * The use of greedy is only needed when we need to use a
-		 * passive transition to separate the two because passive
-		 * transitions can be a complex expression and not just one
-		 * variable and one value.
-		 */
+		// Work backwards from an implicant until we hit a state
+		// in which our production rule should not fire, but does
+		// given the current guard expression. From there we work
+		// forward until we find a transition that separates the
+		// conflicting state from the implicant state. We then use
+		// the greedy algorithm to pick the smallest combination of
+		// values from that transition that will separate the two.
+
+		// The use of greedy is only needed when we need to use a
+		// passive transition to separate the two because passive
+		// transitions can be a complex expression and not just one
+		// variable and one value.
 		bool done = false;
 		bool stuck = false;
 		while (!done)
@@ -862,13 +723,11 @@ void rule::strengthen(petri_net &net, int t)
 				stuck = false;
 			}
 
-			/*
-			 * This is the meat of the whole function. At this point,
-			 * we have reached a new state (where all indices are at
-			 * a place) and we need to determine whether or not we
-			 * need to add a transition to separate this place from
-			 * our initial implicant.
-			 */
+			// This is the meat of the whole function. At this point,
+			// we have reached a new state (where all indices are at
+			// a place) and we need to determine whether or not we
+			// need to add a transition to separate this place from
+			// our initial implicant.
 			for (size_t i = 0; i < reduction->end.size(); i++)
 			{
 				if (!reduction->end[i].placeholder)
@@ -877,9 +736,8 @@ void rule::strengthen(petri_net &net, int t)
 						reduction->end[i].conflict = false;
 					else if (((conflict && success) || !reduction->end[i].conflict) && reduction->end[i].is_place())
 					{
-						/* Check to see if we need to separate this state from the
-						 * implicant by looking for a transition to add in.
-						 */
+						// Check to see if we need to separate this state from the
+						// implicant by looking for a transition to add in.
 						vector<petri_index> o = net.next(reduction->end[i]);
 						o.resize(unique(o.begin(), o.end()) - o.begin());
 						bool is_implicant = false;
@@ -897,11 +755,10 @@ void rule::strengthen(petri_net &net, int t)
 
 						log("", "checking " + to_string(reduction->end[i]) + " " + to_string(conflict) + " " + to_string(success) + " " + to_string(is_implicant) + " " + to_string(reduction->end[i].conflict) + " " + encoding.print(net.vars) + " " + (canonical(uid, 1-t) & reduction->guard & encoding).print(net.vars), __FILE__, __LINE__);
 
-						/* If this state needs to be separated from the implicant state,
-						 * work backwards in the path until we find the closest set of
-						 * transitions that separate them. Then, use greedy to get the
-						 * least number of values needed to separate them.
-						 */
+						// If this state needs to be separated from the implicant state,
+						// work backwards in the path until we find the closest set of
+						// transitions that separate them. Then, use greedy to get the
+						// least number of values needed to separate them.
 						if (!is_implicant && (canonical(uid, 1-t) & reduction->guard & encoding) != 0)
 							reduction->end[i].conflict = true;
 						else
@@ -910,9 +767,8 @@ void rule::strengthen(petri_net &net, int t)
 				}
 			}
 
-			/* Figure out which indices are ready to be moved
-			 * and separate them out into places and transitions.
-			 */
+			// Figure out which indices are ready to be moved
+			// and separate them out into places and transitions.
 			vector<pair<size_t, vector<petri_index> > > ready_transitions;
 			vector<pair<petri_index, vector<size_t> > > ready_places;
 			for (size_t i = 0; i < reduction->end.size(); i++)
@@ -972,9 +828,8 @@ void rule::strengthen(petri_net &net, int t)
 				}
 			}
 
-			/* Transitions are always handled first to ensure that
-			 * we will reach a valid state.
-			 */
+			// Transitions are always handled first to ensure that
+			// we will reach a valid state.
 			if (ready_transitions.size() > 0)
 			{
 				for (size_t i = 0; i < ready_transitions.size(); i++)
@@ -994,10 +849,9 @@ void rule::strengthen(petri_net &net, int t)
 					}
 				}
 			}
-			/* Then places are handled. Every ordering of moving
-			 * from a place to a transition creates a new possible
-			 * execution.
-			 */
+			// Then places are handled. Every ordering of moving
+			// from a place to a transition creates a new possible
+			// execution.
 			else if (ready_places.size() > 0)
 			{
 				// Group them so that we can handle as many as we can without duplicating executions
@@ -1085,7 +939,7 @@ void rule::strengthen(petri_net &net, int t)
 
 				for (size_t i = 0; i < valid_paths.size(); i++)
 				{
-					/****************************** This is the important stuff *****************************/
+					// ****************************** This is the important stuff *****************************
 					list<reductionhdl>::iterator temp_reduction = reduction;
 					if (i < valid_paths.size()-1)
 					{
@@ -1116,7 +970,7 @@ void rule::strengthen(petri_net &net, int t)
 					for (size_t k = 0; k < remove.size(); k++)
 						temp_reduction->end.erase(temp_reduction->end.begin() + remove[k]);
 
-					/****************************************************************************************/
+					// ****************************************************************************************
 				}
 			}
 			else
@@ -1131,27 +985,26 @@ void rule::strengthen(petri_net &net, int t)
 		}
 	}
 
-	/* Once we are done with the above, there is still one more step.
-	 * If you have two rules {x->z-, x&y->z-} and you OR them together,
-	 * then you would end up with {x->z-}. This would create a conflict,
-	 * causing the {x&y->z-} rule to fire where it shouldn't. If we AND
-	 * them together, we would get {x&y->z-}. This would prevent the
-	 * {x->z-} rule from firing when it needs to.
-	 *
-	 * So instead of doing either of these operations, we need to pick
-	 * some values that we can AND into each or either rule to separate
-	 * them. For example {x->z-, x&y->z-} would turn into {x&w->z-, x&y->z-}
-	 * making them now safe to OR, resulting in the rule {x&w|x&y->z-}.
-	 *
-	 * This does not need to be done if the two rules are exactly equal,
-	 * only if information is lost by ORing the two together. To check this,
-	 * you need to go back to The Quine McCluskey algorithm to see when it
-	 * decides to merge minterms.
-	 *
-	 * Picking the right information is just a matter of the greedy algorithm.
-	 * Look for the smallest combination of values that separates the two
-	 * minterms and use that.
-	 */
+	// Once we are done with the above, there is still one more step.
+	// If you have two rules {x->z-, x&y->z-} and you OR them together,
+	// then you would end up with {x->z-}. This would create a conflict,
+	// causing the {x&y->z-} rule to fire where it shouldn't. If we AND
+	// them together, we would get {x&y->z-}. This would prevent the
+	// {x->z-} rule from firing when it needs to.
+	
+	// So instead of doing either of these operations, we need to pick
+	// some values that we can AND into each or either rule to separate
+	// them. For example {x->z-, x&y->z-} would turn into {x&w->z-, x&y->z-}
+	// making them now safe to OR, resulting in the rule {x&w|x&y->z-}.
+	
+	// This does not need to be done if the two rules are exactly equal,
+	// only if information is lost by ORing the two together. To check this,
+	// you need to go back to The Quine McCluskey algorithm to see when it
+	// decides to merge minterms.
+	
+	// Picking the right information is just a matter of the greedy algorithm.
+	// Look for the smallest combination of values that separates the two
+	// minterms and use that.
 	vector<pair<canonical, canonical> > temp_guards;
 	log("", "result", __FILE__, __LINE__);
 	for (list<reductionhdl>::iterator reduction = reductions.begin(); reduction != reductions.end(); reduction++)
@@ -1754,4 +1607,6 @@ void rule_space::print(variable_space &vars, ostream &fout, string newl)
 			}
 			fout << ")" << newl;
 		}
-}*/
+}
+
+*/
